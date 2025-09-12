@@ -1,26 +1,47 @@
-import torch
-from transformers import AutoTokenizer, AutoModelForCausalLM
-from peft import PeftModel
-import gradio as gr
+import streamlit as st
+from src.inference import load_inference_model, generate_response
 
-# Load fine-tuned model and tokenizer
-adapter_path = "./qwen_medical_finetuned"
-base_model = "Qwen/Qwen2.5-0.5B-Instruct"
+# --- Page Configuration ---
+st.set_page_config(
+    page_title="Medical Chatbot 🩺",
+    page_icon="🤖",
+    layout="centered"
+)
 
-tokenizer = AutoTokenizer.from_pretrained(adapter_path, trust_remote_code=True)
-model = AutoModelForCausalLM.from_pretrained(base_model, device_map="auto", torch_dtype=torch.float16, trust_remote_code=True)
-model = PeftModel.from_pretrained(model, adapter_path)
-model.eval()
+# --- Model Loading ---
+# Use st.cache_resource to load the model only once
+@st.cache_resource
+def get_model_and_tokenizer():
+    return load_inference_model()
 
-def chat(instruction):
-    prompt = f"<|im_start|>system\nYou are a helpful medical assistant.<|im_end|>\n<|im_start|>user\n{instruction}<|im_end|>\n<|im_start|>assistant\n"
-    inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
-    outputs = model.generate(**inputs, max_new_tokens=200)
-    decoded = tokenizer.decode(outputs[0], skip_special_tokens=True)
-    return decoded.split("assistant\n")[-1].strip()
+model, tokenizer = get_model_and_tokenizer()
 
-gr.Interface(fn=chat,
-             inputs=gr.Textbox(label="Ask something medical"),
-             outputs=gr.Textbox(label="Response"),
-             title="🧠 Qwen Medical Chatbot",
-             description="LoRA fine-tuned Qwen2.5-0.5B model on medical Q&A").launch()
+# --- App UI ---
+st.title("Qwen 2.5 Medical Chatbot 🩺")
+st.markdown("Ask me any medical question. I'm here to help!")
+
+# Initialize chat history
+if "messages" not in st.session_state:
+    st.session_state.messages = []
+
+# Display chat messages from history on app rerun
+for message in st.session_state.messages:
+    with st.chat_message(message["role"]):
+        st.markdown(message["content"])
+
+# Accept user input
+if prompt := st.chat_input("What is your medical question?"):
+    # Add user message to chat history
+    st.session_state.messages.append({"role": "user", "content": prompt})
+    # Display user message in chat message container
+    with st.chat_message("user"):
+        st.markdown(prompt)
+
+    # Display assistant response in chat message container
+    with st.chat_message("assistant"):
+        with st.spinner("Thinking..."):
+            response = generate_response(model, tokenizer, prompt)
+            st.markdown(response)
+    
+    # Add assistant response to chat history
+    st.session_state.messages.append({"role": "assistant", "content": response})
