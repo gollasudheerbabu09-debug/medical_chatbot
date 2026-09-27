@@ -1,172 +1,75 @@
-# 🧠 Qwen Medical Chatbot
+# 🩺 MedAI — Medical QA with Qwen2.5 + QLoRA + RAG (FAISS)
 
-This project focuses on building a lightweight, domain-specific medical chatbot by fine-tuning the Qwen2.5-0.5B-Instruct language model using LoRA (Low-Rank Adaptation). It leverages a custom instruction-response dataset built around health, wellness, and alternative medicine to teach the model how to answer medically relevant queries in natural language. The final model is memory-efficient, using 4-bit quantization, and is deployed through a Gradio-powered web interface for real-time interaction.
+A medical question-answering assistant built by fine-tuning **Qwen2.5-1.5B-Instruct** with **QLoRA** on the
+**MedQuAD** dataset and grounding answers with **retrieval-augmented generation** (sentence embeddings + FAISS),
+with a **Gradio** chat interface.
 
----
+> Educational project — not medical advice.
 
-## 🤖 Hosted on Hugging Face Spaces
-A live demo is hosted on Hugging Face Spaces:
-👉 [Try it now](https://huggingface.co/spaces/PrepStation201/medical-chat-bot)
+**Fine-tuned LoRA adapter (Hugging Face Hub):** https://huggingface.co/Sudheer2002/qwen2.5-1.5b-medquad-qlora
 
-This space integrates the fine-tuned model with an interactive web-based chatbot, allowing users to ask medical questions and receive informative responses in real time.
-
----
-
-## 📌 Table of Contents
-
-- [Features](#features)
-- [Model Architecture](#model-architecture)
-- [Dataset](#dataset)
-- [Before vs After Fine-Tuning](#before-vs-after-fine-tuning)
-- [Training Visualizations](#training-visualizations)
-- [Running Locally](#running-locally)
-- [Live Demo](#live-demo)
-- [Technologies Used](#technologies-used)
-- [Project Directory Structure](#project-directory-structure)
-- [License](#license)
-
----
-
-## ✅ Features
-
-- 🏥 Fine-tuned on a curated dataset targeting healthcare and alternative medicine topics
-- ⚙️ LoRA-based training that reduces compute cost and training time
-- 💾 Supports 4-bit quantization for low-resource environments (e.g., Google Colab)
-- 🌍 Web interface using Gradio for public-facing chat interaction
-- 📈 Tracks performance with integrated TensorBoard logging
-- 🔍 Demonstrates measurable improvement over base model with before/after examples
-- 📦 Clean project structure ready for GitHub and Hugging Face deployment
-
----
-
-## 🧠 Model Architecture
-
+## Architecture
 ```
-CSV Dataset → Prompt Formatting → Tokenization → LoRA Fine-Tuning → Gradio Deployment
+TRAINING   MedQuAD (16,359 QA pairs after cleaning) -> Qwen chat template -> train/val/test (80/10/10)
+           -> Qwen tokenizer -> 4-bit NF4 frozen Qwen2.5-1.5B + LoRA (r=16, attention + MLP, 1.2% trainable)
+           -> cross-entropy on answer tokens only -> backprop -> paged 8-bit AdamW -> LoRA adapter
+
+RAG INDEX  train-split answers -> 180-word chunks (40 overlap) -> BAAI/bge-small-en-v1.5
+           -> FAISS IndexFlatIP (cosine), 22,449 chunks
+
+INFERENCE  question -> query embedding -> FAISS top-4 -> question + context
+           -> Qwen2.5 + merged LoRA -> streamed answer + sources -> Gradio
 ```
 
-![Model Architecture](architecture.png)
+## Results
+Training: 2,000 MedQuAD examples, 1 epoch (125 steps), single Kaggle T4 GPU.
 
-- **Base Model**: [Qwen2.5-0.5B-Instruct](https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct)
-- **Fine-Tuning Technique**: Parameter-efficient LoRA adaptation using the PEFT library
-- **Training Library**: Hugging Face `transformers`, `trl`, and `accelerate`
-- **Deployment**: Web chatbot built using Gradio
+| Metric | Value |
+|---|---|
+| Validation loss | 1.213 |
+| Validation perplexity | 3.36 |
 
----
+Generation quality on 50 held-out test questions:
 
-## 📁 Dataset
+| Model | ROUGE-L | BERTScore-F1 |
+|---|---|---|
+| Qwen2.5-1.5B-Instruct (base) | 0.140 | 0.773 |
+| + QLoRA fine-tuning | 0.240 | **0.807** |
+| + QLoRA + RAG | **0.263** | 0.800 |
 
-This chatbot was trained on a custom-built CSV file named `nlpsquad_dataset.csv`. It contains ~1,600 high-quality instruction-response pairs inspired by reliable sources such as [Gale Encyclopedia of Alternative Medicine](https://staibabussalamsula.ac.id/wp-content/uploads/2024/06/The-Gale-Encyclopedia-of-Medicine-3rd-Edition-staibabussalamsula.ac_.id_.pdf)
+![Training and validation loss](docs/loss_curve.png)
 
-Each entry includes:
-- `Instruction`: A natural language query (e.g., "What are the symptoms of stress?")
-- `Response`: A concise and medically relevant answer (e.g., "Common symptoms include fatigue, irritability, insomnia...")
+**Takeaways**
+- QLoRA fine-tuning improved ROUGE-L by ~71% over the base model (0.140 → 0.240) and BERTScore-F1 from 0.773 to 0.807.
+- RAG raised lexical overlap further (ROUGE-L 0.263) while BERTScore stayed about the same.
+- Limitations: the evaluation set is small (n = 50), and manual review shows the 1.5B model can still state
+  incorrect medical facts (e.g. inheritance patterns) even with retrieved context. Larger models, a
+  stricter grounding prompt, and faithfulness evaluation are natural next steps.
 
-The dataset is formatted using instruction-tuning style prompts:
-```text
-<s>[INST] user question [/INST] assistant response </s>
+## Repository layout
+```
+notebooks/MedAI_QLoRA_RAG_pipeline.ipynb   end-to-end: data -> QLoRA -> eval -> FAISS -> deploy
+space/app.py            Gradio app (streaming, shows retrieved sources, ZeroGPU-ready)
+space/rag.py            cleaning, split, chunking, embeddings, FAISS, prompt building
+space/requirements.txt  app dependencies
+docs/                   project flow notes, deployment guide, loss curve
 ```
 
-This format aligns with what the Qwen model expects for instruction-following tasks.
-
----
-
-## 🧪 Before vs After Fine-Tuning
-
-See [comparison_outputs.md](comparison_outputs.md) for a full side-by-side comparison of responses.
-
-| Prompt                             | Base Model Output        | Fine-Tuned Output                                       |
-|------------------------------------|--------------------------|---------------------------------------------------------|
-| What are remedies for migraines?   | I don't know.            | Ginger, peppermint oil, magnesium, and riboflavin...   |
-| How does Ayurveda treat insomnia?  | No response.             | Ayurveda recommends ashwagandha and calming herbs...    |
-| What vitamins help reduce fatigue? | No answer.               | B-complex, iron, and magnesium are commonly used...     |
-
----
-
-## 📊 Training Visualizations
-
-The training process was monitored using TensorBoard and Matplotlib:
-
-- 📉 **Loss Curve** - model performance over training steps
-  ![Loss Curve](loss_curve.png)
-
-- 📈 **Learning Rate Schedule** - gradual warm-up and decay
-  ![LR Curve](lr_curve.png)
-
-- 📊 **Instruction Length Histogram** - token length distribution in training data
-  ![Instruction Length Histogram](instr_length_hist.png)
-
-These graphs help assess training stability, overfitting risk, and data consistency.
-
----
-
-## 💻 Running Locally
-
-> Requirements: Python 3.10+, pip, and a GPU (optional)
-
-1. Clone the repository:
-```bash
-git clone https://github.com/yourusername/qwen-medical-chatbot.git
-cd qwen-medical-chatbot
+## Run the demo
+The Gradio app runs on any GPU notebook (e.g. Kaggle T4):
+```python
+!pip install -q -U transformers peft accelerate sentence-transformers faiss-cpu datasets gradio
+!git clone https://github.com/gollasudheerbabu09-debug/Medical_ChatBot_002.git
+%cd Medical_ChatBot_002/space
+!sed -i 's/torch.bfloat16 if use_gpu/torch.float16 if use_gpu/' app.py
+import os
+os.environ["BASE_MODEL"] = "Qwen/Qwen2.5-1.5B-Instruct"
+os.environ["ADAPTER_ID"] = "Sudheer2002/qwen2.5-1.5b-medquad-qlora"
+import app
+app.demo.queue().launch(share=True)
 ```
 
-2. Install the dependencies:
-```bash
-pip install -r requirements.txt
-```
-
-3. Launch the Gradio chatbot:
-```bash
-python app.py
-```
-
-> ✅ You can now ask health-related questions directly through your browser.
-
----
-
-## 🌐 Live Demo
-
-👉 [Click here to try the chatbot on Hugging Face Spaces](https://huggingface.co/spaces/PrepStation201/medical-chat-bot)
-
-This version runs using the `adapter_model.safetensors` via LoRA and the base Qwen2.5 model for efficient public access.
-
----
-
-## 🧰 Technologies Used
-
-| Tool             | Purpose                                              |
-|------------------|------------------------------------------------------|
-| 🤗 Transformers   | Loading and managing pretrained language models      |
-| 🧪 PEFT (LoRA)     | Lightweight fine-tuning strategy                     |
-| 🧠 TRL             | Supervised fine-tuning trainer for instruction tasks |
-| 📈 TensorBoard     | Real-time training metrics visualization             |
-| 📊 Matplotlib      | Plotting and analysis of dataset & loss curves       |
-| 🌐 Gradio          | Deploying chatbot with a web interface               |
-
----
-
-## 📁 Project Directory Structure
-
-```bash
-qwen-medical-chatbot/
-├── app.py
-├── architecture.png
-├── comparison_outputs.md
-├── instr_length_hist.png
-├── loss_curve.png
-├── lr_curve.png
-├── qwen_medical_finetuned/
-├── nlpsquad_dataset.csv
-├── requirements.txt
-├── README.md
-├── LICENSE
-└── .gitignore
-```
-
----
-
-## 📄 License
-
-This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for full details.
-
-```
+## Design notes
+- **Loss on answers only**: prompt tokens are masked with `-100`, and Qwen's own pad token is kept so the model learns the `<|im_end|>` stop token.
+- **Dynamic padding at 512 tokens** instead of padding to 2048 cut training tokens by ~6.7×.
+- **No test leakage in RAG**: answers that appear in the test split are excluded from the FAISS index.
