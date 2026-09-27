@@ -8,6 +8,12 @@ with a **Gradio** chat interface.
 
 **Fine-tuned LoRA adapter (Hugging Face Hub):** https://huggingface.co/Sudheer2002/qwen2.5-1.5b-medquad-qlora
 
+
+
+
+https://github.com/user-attachments/assets/7c1e06ef-ef44-4779-97ed-3646f746ec07
+
+
 ## Architecture
 ```
 TRAINING   MedQuAD (16,359 QA pairs after cleaning) -> Qwen chat template -> train/val/test (80/10/10)
