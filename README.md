@@ -43,7 +43,7 @@ Generation quality on 50 held-out test questions:
 | + QLoRA fine-tuning | 0.240 | **0.807** |
 | + QLoRA + RAG | **0.263** | 0.800 |
 
-![Training and validation loss](docs/loss_curve.png)
+![Training and validation loss](<img width="613" height="393" alt="loss_curve" src="https://github.com/user-attachments/assets/0fa27c84-27f4-40cb-982f-872eaf946b6c" />)
 
 **Takeaways**
 - QLoRA fine-tuning improved ROUGE-L by ~71% over the base model (0.140 → 0.240) and BERTScore-F1 from 0.773 to 0.807.
