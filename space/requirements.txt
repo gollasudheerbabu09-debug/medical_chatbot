@@ -1,0 +1,9 @@
+torch
+transformers>=4.56
+peft>=0.13
+accelerate
+sentence-transformers>=3.0
+faiss-cpu
+datasets
+scikit-learn
+pandas

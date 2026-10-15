@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+*.ipynb_checkpoints/
+logs/
+*.zip
+*.png
+qwen2.5_0.5B_medical/
