@@ -1,22 +1,11 @@
-
-# Core ML & Transformers
-transformers>=4.30
-peft>=0.5.0
-datasets
-torch>=2.0
-trl>=0.7.0
-accelerate>=0.25.0
-
-# UI
-gradio>=4.0.0
-streamlit>=1.26.0
-
-# Utilities
+# Runtime dependencies for the Streamlit app (CPU-only, fits Streamlit Community Cloud).
+# Training dependencies are installed inside the Kaggle notebook instead.
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch
+transformers>=4.56
+peft>=0.13
+sentence-transformers>=3.0
+faiss-cpu
+huggingface_hub
 numpy
-pandas
-matplotlib
-tensorboard
-scikit-learn
-torchvision
-
-
+streamlit>=1.40

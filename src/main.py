@@ -1,39 +1,26 @@
 # src/main.py
+"""Train MedAI from the command line (needs a GPU). Run from the repository root:
 
-from config import MODEL_NAME, LORA_CONFIG, TRAINING_ARGUMENTS, DATA_PATH
-from data_loader import load_and_prepare_data
-from chatbot import MedicalChatbot
+    pip install -r requirements-train.txt
+    python -m src.main
+"""
+from .chatbot import MedicalChatbot
+from .config import (DATA_PATH, LORA_CONFIG, MAX_LEN, MAX_TRAIN_SAMPLES, MODEL_NAME,
+                     N_VAL, TRAINING_ARGUMENTS)
+from .data_loader import load_and_prepare_data
+
 
 def main():
-    # Load and prepare data
-    train_dataset = load_and_prepare_data(DATA_PATH)
+    chatbot = MedicalChatbot(MODEL_NAME, LORA_CONFIG, TRAINING_ARGUMENTS)
 
-    # Initialize the chatbot
-    chatbot = MedicalChatbot(
-        model_name=MODEL_NAME,
-        lora_config=LORA_CONFIG,
-        training_args=TRAINING_ARGUMENTS
-    )
+    train_ds, val_ds, _ = load_and_prepare_data(DATA_PATH, chatbot.tokenizer, MAX_LEN, MAX_TRAIN_SAMPLES, N_VAL)
+    print(f"train: {len(train_ds)} | val: {len(val_ds)}")
 
-    # Fine-tune the chatbot
-    chatbot.fine_tune(train_dataset)
+    chatbot.fine_tune(train_ds, val_ds)
+    chatbot.save(TRAINING_ARGUMENTS["output_dir"])
 
-
-    # Format the instruction to match the training data format
-    instruction = """### Instruction:
-                    You are a medical chatbot. Your task is to answer the user's medical question.
-
-                    ### Question:
-                    What are some early symptoms of cholera?
-
-                    ### Response:
-                    """
-
-    print("Generating response...")
-    response = chatbot.generate_response(instruction)
-    print("\n--- Model Response ---")
-    print(response)
-    print("--------------------")
+    print("\n--- Sample answer ---")
+    print(chatbot.generate_response("What are some early symptoms of cholera?"))
 
 
 if __name__ == "__main__":

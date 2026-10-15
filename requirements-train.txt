@@ -1,0 +1,11 @@
+# Training dependencies (GPU machine / Kaggle). The Streamlit app uses requirements.txt instead.
+torch
+transformers>=4.56
+peft>=0.13
+accelerate
+bitsandbytes
+datasets
+pandas
+scikit-learn
+sentence-transformers
+faiss-cpu

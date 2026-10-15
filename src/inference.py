@@ -1,99 +1,67 @@
+# src/inference.py
+"""Model loading, retrieval and generation for the MedAI app.
+
+Uses the SAME prompt format the model was fine-tuned on (Qwen chat template + MedAI system prompt),
+and the SAME retrieval code as training/evaluation (space/rag.py).
+"""
+import threading
 
 import torch
-from peft import PeftModel
-from transformers import AutoTokenizer, AutoModelForCausalLM
+from huggingface_hub import snapshot_download
+from transformers import AutoModelForCausalLM, AutoTokenizer, TextIteratorStreamer
 
-from .config import MODEL_NAME
-
-# Base model and fine-tuned LoRA adapter
-ADAPTER_PATH = "Sudheer2002/qwen2.5-1.5b-medquad-qlora"
+from space import rag
+from .config import ADAPTER_ID, INDEX_REPO, MODEL_ID
 
 
 def load_inference_model():
-    """Load the base model and apply the trained LoRA adapter."""
+    """Load the fine-tuned model and its tokenizer."""
+    use_gpu = torch.cuda.is_available()
+    dtype = torch.float16 if use_gpu else torch.bfloat16   # bf16 halves CPU memory vs float32
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    dtype = torch.float16 if device.type == "cuda" else torch.float32
+    tokenizer = AutoTokenizer.from_pretrained(ADAPTER_ID or MODEL_ID)
+    model = AutoModelForCausalLM.from_pretrained(MODEL_ID, dtype=dtype, low_cpu_mem_usage=True)
 
-    print(f"Loading base model: {MODEL_NAME}")
-    print(f"Device: {device}")
+    if ADAPTER_ID:                                   # base model + LoRA adapter -> merge W + BA
+        from peft import PeftModel
+        model = PeftModel.from_pretrained(model, ADAPTER_ID).merge_and_unload()
 
-    # Load the same base model used during fine-tuning
-    model = AutoModelForCausalLM.from_pretrained(
-        MODEL_NAME,
-        torch_dtype=dtype,
-        trust_remote_code=True,
-        low_cpu_mem_usage=True
-    )
-
-    print(f"Loading LoRA adapter: {ADAPTER_PATH}")
-
-    # Download and apply the adapter from Hugging Face
-    model = PeftModel.from_pretrained(
-        model,
-        ADAPTER_PATH
-    )
-
-    # Merge LoRA weights into the base model
-    model = model.merge_and_unload()
-
-    model.to(device)
+    if use_gpu:
+        model.to("cuda")
     model.eval()
-
-    # Load the base model tokenizer
-    tokenizer = AutoTokenizer.from_pretrained(
-        MODEL_NAME,
-        trust_remote_code=True
-    )
-
-    if tokenizer.pad_token is None:
-        tokenizer.pad_token = tokenizer.eos_token
-
-    print("Model and adapter loaded successfully.")
-
     return model, tokenizer
 
 
-def generate_response(model, tokenizer, question):
-    """Generate an answer using the fine-tuned model."""
+def load_retriever():
+    """Download the prebuilt FAISS index from the Hugging Face Hub and load it."""
+    index_dir = snapshot_download(INDEX_REPO, repo_type="dataset")
+    return rag.Retriever(index_dir, embedder=rag.load_embedder(device="cpu"))
 
-    device = next(model.parameters()).device
 
-    prompt = f"""### Instruction:
-You are a medical chatbot. Answer the user's medical question
-with clear, helpful, and medically cautious information.
+def build_prompt(question, retriever=None, top_k=3, history=None):
+    """Retrieve context (optional) and build chat messages. Returns (messages, sources)."""
+    contexts = retriever.search(question, k=top_k) if retriever is not None else []
+    messages = rag.build_messages(question, contexts, history)
+    sources = [f"{c['source_question']} (similarity {c['score']:.2f})" for c in contexts]
+    return messages, sources
 
-### Question:
-{question}
 
-### Response:
-"""
+def stream_response(model, tokenizer, messages, max_new_tokens=200, temperature=0.2):
+    """Yield the answer piece by piece (for st.write_stream)."""
+    text = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+    inputs = tokenizer(text, return_tensors="pt").to(model.device)
+    streamer = TextIteratorStreamer(tokenizer, skip_prompt=True, skip_special_tokens=True, timeout=600)
+    kwargs = dict(**inputs, streamer=streamer, max_new_tokens=int(max_new_tokens), repetition_penalty=1.05)
+    if temperature > 0:
+        kwargs.update(do_sample=True, temperature=float(temperature), top_p=0.9)
+    else:
+        kwargs.update(do_sample=False)
+    threading.Thread(target=model.generate, kwargs=kwargs, daemon=True).start()
+    yield from streamer
 
-    inputs = tokenizer(
-        prompt,
-        return_tensors="pt"
-    ).to(device)
 
-    with torch.no_grad():
-        outputs = model.generate(
-            **inputs,
-            max_new_tokens=250,
-            do_sample=True,
-            temperature=0.7,
-            top_k=50,
-            top_p=0.95,
-            pad_token_id=tokenizer.eos_token_id,
-            eos_token_id=tokenizer.eos_token_id
-        )
-
-    # Decode only the newly generated answer
-    input_length = inputs["input_ids"].shape[1]
-
-    generated_tokens = outputs[0][input_length:]
-
-    response = tokenizer.decode(
-        generated_tokens,
-        skip_special_tokens=True
-    ).strip()
-
-    return response
+def generate_response(model, tokenizer, question, retriever=None, top_k=3, max_new_tokens=200, temperature=0.2):
+    """Non-streaming helper: returns (answer, sources)."""
+    messages, sources = build_prompt(question, retriever, top_k)
+    answer = "".join(stream_response(model, tokenizer, messages, max_new_tokens, temperature)).strip()
+    return answer, sources
