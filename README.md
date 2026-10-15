@@ -4,6 +4,9 @@ A medical question-answering assistant built by fine-tuning **Qwen2.5-1.5B-Instr
 **MedQuAD** dataset and grounding answers with **retrieval-augmented generation** (sentence embeddings + FAISS),
 with a **Gradio** chat interface.
 
+
+**Live Demo:** https://medicalchatbot-jm6zysxr9c7a998mvq7gcn.streamlit.app/
+
 > Educational project — not medical advice.
 
 **Fine-tuned LoRA adapter (Hugging Face Hub):** https://huggingface.co/Sudheer2002/qwen2.5-1.5b-medquad-qlora
