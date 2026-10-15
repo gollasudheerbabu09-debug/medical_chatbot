@@ -17,6 +17,6 @@ pandas
 matplotlib
 tensorboard
 scikit-learn
-
+torchvision
 
 
