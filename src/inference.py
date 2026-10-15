@@ -2,9 +2,10 @@
 import torch
 from peft import PeftModel
 from transformers import AutoTokenizer, AutoModelForCausalLM
+
 from .config import MODEL_NAME
 
-# Hugging Face adapter repository
+# Hugging Face LoRA adapter repository
 ADAPTER_PATH = "Sudheer2002/qwen2.5-1.5b-medquad-qlora"
 
 
@@ -16,17 +17,29 @@ def load_inference_model():
 
     print(f"Loading base model on {device}...")
 
+    # Load the base model
     model = AutoModelForCausalLM.from_pretrained(
         MODEL_NAME,
         torch_dtype=dtype,
-        trust_remote_code=True
+        trust_remote_code=True,
+        low_cpu_mem_usage=True
     )
 
-    model = PeftModel.from_pretrained(model, ADAPTER_PATH)
+    print("Loading LoRA adapter...")
+
+    # Load the adapter directly from Hugging Face
+    model = PeftModel.from_pretrained(
+        model,
+        ADAPTER_PATH
+    )
+
+    # Merge adapter weights into the base model
     model = model.merge_and_unload()
+
     model.to(device)
     model.eval()
 
+    # Load tokenizer
     tokenizer = AutoTokenizer.from_pretrained(
         MODEL_NAME,
         trust_remote_code=True
@@ -44,7 +57,8 @@ def generate_response(model, tokenizer, question):
     device = next(model.parameters()).device
 
     prompt = f"""### Instruction:
-You are a medical chatbot. Your task is to answer the user's medical question.
+You are a medical chatbot. Answer the user's medical question
+with clear, helpful, and medically cautious information.
 
 ### Question:
 {question}
@@ -62,17 +76,20 @@ You are a medical chatbot. Your task is to answer the user's medical question.
             **inputs,
             max_new_tokens=250,
             do_sample=True,
+            temperature=0.7,
             top_k=50,
             top_p=0.95,
-            pad_token_id=tokenizer.eos_token_id
+            pad_token_id=tokenizer.eos_token_id,
+            eos_token_id=tokenizer.eos_token_id
         )
 
-    response = tokenizer.decode(
-        outputs[0],
-        skip_special_tokens=True
-    )
+    # Decode only newly generated tokens
+    input_length = inputs["input_ids"].shape[1]
+    generated_tokens = outputs[0][input_length:]
 
-    if "### Response:" in response:
-        return response.split("### Response:", 1)[1].strip()
+    response = tokenizer.decode(
+        generated_tokens,
+        skip_special_tokens=True
+    ).strip()
 
     return response
