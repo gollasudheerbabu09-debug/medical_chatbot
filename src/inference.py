@@ -1,43 +1,57 @@
+
+import os
 import torch
 from peft import PeftModel
 from transformers import AutoTokenizer, AutoModelForCausalLM
-
-# Import your model configuration
 from .config import MODEL_NAME
 
-# Path to your saved LoRA adapter
+# Update this path to the directory containing adapter_config.json
 ADAPTER_PATH = "./qwen_medical_finetuned/qwen_medical_finetuned"
 
 
 def load_inference_model():
-    """
-    Loads the base model and merges it with the fine-tuned LoRA adapter.
-    """
-    print("Loading base model...")
+    """Load the base model and apply the LoRA adapter."""
+
+    if not os.path.isfile(os.path.join(ADAPTER_PATH, "adapter_config.json")):
+        raise FileNotFoundError(
+            f"LoRA adapter configuration not found at: {ADAPTER_PATH}. "
+            "Check the adapter folder and ensure adapter_config.json exists."
+        )
+
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    dtype = (
+        torch.float16 if device == "cuda" else torch.float32
+    )
+
+    print(f"Loading base model on {device}...")
+
     model = AutoModelForCausalLM.from_pretrained(
         MODEL_NAME,
-        torch_dtype=torch.bfloat16,
-        device_map="auto",
+        torch_dtype=dtype,
         trust_remote_code=True
     )
 
-    print("Loading LoRA adapter and merging...")
-    # Load the LoRA adapter and merge it with the base model
     model = PeftModel.from_pretrained(model, ADAPTER_PATH)
-    model = model.merge_and_unload() # This is the key step!
+    model = model.merge_and_unload()
+    model.to(device)
+    model.eval()
 
-    print("Loading tokenizer...")
-    tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME, trust_remote_code=True)
-    tokenizer.pad_token = tokenizer.eos_token
+    tokenizer = AutoTokenizer.from_pretrained(
+        MODEL_NAME,
+        trust_remote_code=True
+    )
 
-    print("✅ Model and tokenizer ready for inference.")
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+
     return model, tokenizer
 
+
 def generate_response(model, tokenizer, question):
-    """
-    Generates a response to a given question using the fine-tuned model.
-    """
-    # Format the prompt using the same template as in training
+    """Generate a response using the fine-tuned model."""
+
+    device = next(model.parameters()).device
+
     prompt = f"""### Instruction:
 You are a medical chatbot. Your task is to answer the user's medical question.
 
@@ -47,14 +61,21 @@ You are a medical chatbot. Your task is to answer the user's medical question.
 ### Response:
 """
 
-    # Tokenize the input and generate the output
-    inputs = tokenizer(prompt, return_tensors="pt").to("cuda")
-    outputs = model.generate(**inputs, max_new_tokens=250, do_sample=True, top_k=50, top_p=0.95)
+    inputs = tokenizer(prompt, return_tensors="pt").to(device)
+
+    with torch.no_grad():
+        outputs = model.generate(
+            **inputs,
+            max_new_tokens=250,
+            do_sample=True,
+            top_k=50,
+            top_p=0.95,
+            pad_token_id=tokenizer.eos_token_id
+        )
+
     response = tokenizer.decode(outputs[0], skip_special_tokens=True)
 
-    # Clean up the response to only show the actual answer
-    # This splits the full text at "### Response:" and takes the part after it.
-    try:
-        return response.split("### Response:")[1].strip()
-    except IndexError:
-        return "Could not generate a valid response."
+    if "### Response:" in response:
+        return response.split("### Response:", 1)[1].strip()
+
+    return response
