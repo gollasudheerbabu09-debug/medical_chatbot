@@ -1,27 +1,18 @@
 
-import os
 import torch
 from peft import PeftModel
 from transformers import AutoTokenizer, AutoModelForCausalLM
 from .config import MODEL_NAME
 
-# Update this path to the directory containing adapter_config.json
-ADAPTER_PATH = "./qwen_medical_finetuned/qwen_medical_finetuned"
+# Hugging Face adapter repository
+ADAPTER_PATH = "Sudheer2002/qwen2.5-1.5b-medquad-qlora"
 
 
 def load_inference_model():
     """Load the base model and apply the LoRA adapter."""
 
-    if not os.path.isfile(os.path.join(ADAPTER_PATH, "adapter_config.json")):
-        raise FileNotFoundError(
-            f"LoRA adapter configuration not found at: {ADAPTER_PATH}. "
-            "Check the adapter folder and ensure adapter_config.json exists."
-        )
-
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    dtype = (
-        torch.float16 if device == "cuda" else torch.float32
-    )
+    dtype = torch.float16 if device == "cuda" else torch.float32
 
     print(f"Loading base model on {device}...")
 
@@ -61,7 +52,10 @@ You are a medical chatbot. Your task is to answer the user's medical question.
 ### Response:
 """
 
-    inputs = tokenizer(prompt, return_tensors="pt").to(device)
+    inputs = tokenizer(
+        prompt,
+        return_tensors="pt"
+    ).to(device)
 
     with torch.no_grad():
         outputs = model.generate(
@@ -73,7 +67,10 @@ You are a medical chatbot. Your task is to answer the user's medical question.
             pad_token_id=tokenizer.eos_token_id
         )
 
-    response = tokenizer.decode(outputs[0], skip_special_tokens=True)
+    response = tokenizer.decode(
+        outputs[0],
+        skip_special_tokens=True
+    )
 
     if "### Response:" in response:
         return response.split("### Response:", 1)[1].strip()
